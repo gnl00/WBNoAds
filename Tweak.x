@@ -1,3 +1,5 @@
+#import <UIKit/UIKit.h>
+
 %hook WBAdSdkFlashAdView
 - (id)initWithWindow:(id)arg1 {
     return 0;
