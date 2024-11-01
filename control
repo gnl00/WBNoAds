@@ -2,8 +2,7 @@ Package: com.huami.wbnoads
 Name: WBNoAds
 Version: 0.0.1
 Architecture: iphoneos-arm
-Description: An awesome MobileSubstrate tweak!
-Maintainer: huami
-Author: huami
+Description: Give you a pure Weibo
 Section: Tweaks
-Depends: mobilesubstrate (>= 0.9.5000)
+Depends: firmware (>= 5.0), mobilesubstrate
+Priority: optional
