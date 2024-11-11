@@ -114,14 +114,16 @@
 %end
 
 // 移除信息流博文
-@interface WBS3CellCollectionViewCell : UIView
-@end
 @interface WBContentAuthView : UIView
+@end
+@interface WBStatusContentView : UIView
+@end
+@interface WBS3CellCollectionViewCell : UIView
 @end
 @interface WBS3RLCollectionView : UIView
 @end
 
-// 广告、推荐
+// 广告、推荐 WBContentAuthView
 %hook WBContentAuthView
 - (id)initWithFrame:(CGRect)frame {
     self = %orig;
@@ -132,20 +134,60 @@
             UIView *superview = self;
             while (superview != nil) {
                 if ([superview isKindOfClass:NSClassFromString(@"WBS3CellCollectionViewCell")]) {
-                    // 找到 WBS3CellCollectionViewCell，移除它
+                    // 找到 WBS3CellCollectionViewCell 移除
                     [superview removeFromSuperview];
-                    break; // 找到后停止查找
+                    break;
                 } else if ([superview isKindOfClass:NSClassFromString(@"WBS3RLCollectionView")]) {
                     // 如果找到 WBS3RLCollectionView 还未找到 WBS3CellCollectionViewCell，则停止查找
                     break;
                 }
-                superview = superview.superview; // 向上查找
+                superview = superview.superview;
             }
         }
     }
     return self;
 }
+%end
+// 广告、推荐 WBStatusContentView
+%hook WBStatusContentView
+- (id)initWithFrame:(CGRect)frame {
+    self = %orig;
+    if (self) {
+        if (!CGRectEqualToRect(frame, CGRectZero)) {
+            UIView *superview = self;
+            while (superview != nil) {
+                if ([superview isKindOfClass:NSClassFromString(@"WBS3CellCollectionViewCell")]) {
+                    [superview removeFromSuperview];
+                    break;
+                } else if ([superview isKindOfClass:NSClassFromString(@"WBS3RLCollectionView")]) {
+                    break;
+                }
+                superview = superview.superview;
+            }
+        }
+    }
+    return self;
+}
+%end
 
+// 博文下方推荐 WBContentHeaderTrendCell
+@interface WBContentHeaderTrendCell: UIView
+@end
+%hook WBContentHeaderTrendCell
+- (void)layoutSubviews {
+    %orig;
+    [self removeFromSuperview];
+}
+%end
+
+// 博文评论推荐 WBTrendCommentCell
+@interface WBTrendCommentCell: UIView
+@end
+%hook WBTrendCommentCell
+- (void)layoutSubviews {
+    %orig;
+    [self removeFromSuperview];
+}
 %end
 
 // 热搜 tab
@@ -172,20 +214,32 @@
 %end
 
 // 禁止网络请求
-@interface CustomURLProtocol : NSURLProtocol
+@interface CustomURLProtocol: NSURLProtocol
 @end
 
 @implementation CustomURLProtocol
 
 + (BOOL)canInitWithRequest:(NSURLRequest *)request {
-    // 检查是否是要拦截的 URL
-    if ([request.URL.absoluteString hasPrefix:@"https://wbapp.uve.weibo.com/wbapplua/wbpullad.lua"]
-        || [request.URL.absoluteString hasPrefix:@"https://bootpreload.uve.weibo.com/v2/ad/preload"]
-        || [request.URL.absoluteString hasPrefix:@"https://api.weibo.cn/2/video/tiny_stream"]
-        || [request.URL.absoluteString hasPrefix:@"https://api.weibo.cn/2/video/tiny_stream_video_list"]
-        || [request.URL.absoluteString hasPrefix:@"https://api.weibo.cn/2/video/!/multimedia/playback/batch_get"]
-        ) {
-        return YES;
+    // 定义需要拦截的 URL 前缀数组
+    static NSArray *blockedPrefixes = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        blockedPrefixes = @[
+            @"https://wbapp.uve.weibo.com/wbapplua/wbpullad.lua",
+            @"https://bootpreload.uve.weibo.com/v2/ad/preload",
+            @"https://adstrategy.biz.weibo.com/v3/strategy/ad",
+            @"https://api.weibo.cn/2/video/tiny_stream",
+            @"https://api.weibo.cn/2/video/tiny_stream_video_list",
+            @"https://api.weibo.cn/2/video/!/multimedia/playback/batch_get"
+        ];
+    });
+    
+    // 检查 URL 是否匹配任何前缀
+    NSString *urlString = request.URL.absoluteString;
+    for (NSString *prefix in blockedPrefixes) {
+        if ([urlString hasPrefix:prefix]) {
+            return YES;
+        }
     }
     return NO;
 }
@@ -215,3 +269,98 @@
 }
 
 @end
+
+// 拦截热搜
+%hook NSURLProtocol
+
++ (BOOL)canInitWithRequest:(NSURLRequest *)request {
+    if ([request.URL.absoluteString hasPrefix:@"https://api.weibo.cn/2/flowpage"]) {
+        return YES;
+    }
+    return %orig;
+}
+
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
+    return request;
+}
+
+- (void)startLoading {
+    if ([self.request.URL.absoluteString hasPrefix:@"https://api.weibo.cn/2/flowpage"]) {
+        // 创建会话配置
+        NSURLSessionConfiguration *configuration = [NSURLSessionConfiguration defaultSessionConfiguration];
+        NSURLSession *session = [NSURLSession sessionWithConfiguration:configuration];
+        
+        // 创建数据任务
+        NSURLSessionDataTask *dataTask = [session dataTaskWithRequest:self.request 
+                                                  completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+            if (error || !data) {
+                [self.client URLProtocol:self didFailWithError:error];
+                return;
+            }
+            
+            // 解析 JSON
+            NSError *jsonError = nil;
+            NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonError];
+            if (jsonError || !json) {
+                [self.client URLProtocol:self didFailWithError:jsonError];
+                return;
+            }
+            
+            // 过滤数据
+            NSMutableDictionary *filteredJson = [json mutableCopy];
+            NSArray *items = json[@"items"];
+            if ([items isKindOfClass:[NSArray class]]) {
+                NSMutableArray *filteredItems = [NSMutableArray array];
+                
+                for (NSDictionary *item in items) {
+                    // 检查是否需要过滤
+                    BOOL shouldFilter = NO;
+                    
+                    // 检查 desc 字段
+                    NSString *desc = item[@"data"][@"desc"];
+                    if ([desc isKindOfClass:[NSString class]] && [desc containsString:@"慕"]) {
+                        shouldFilter = YES;
+                    }
+                    
+                    // 检查 desc_extr 字段
+                    NSString *descExtr = item[@"data"][@"desc_extr"];
+                    if ([descExtr isKindOfClass:[NSString class]] && [descExtr containsString:@"剧集"]) {
+                        shouldFilter = YES;
+                    }
+                    
+                    // 如果不需要过滤，添加到新数组
+                    if (!shouldFilter) {
+                        [filteredItems addObject:item];
+                    }
+                }
+                
+                // 更新过滤后的数据
+                filteredJson[@"items"] = filteredItems;
+            }
+            
+            // 创建新的响应数据
+            NSData *filteredData = [NSJSONSerialization dataWithJSONObject:filteredJson options:0 error:nil];
+            if (!filteredData) {
+                [self.client URLProtocol:self didFailWithError:[NSError errorWithDomain:@"JSONSerializationError" code:-1 userInfo:nil]];
+                return;
+            }
+            
+            // 返回过滤后的数据
+            [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
+            [self.client URLProtocol:self didLoadData:filteredData];
+            [self.client URLProtocolDidFinishLoading:self];
+        }];
+        
+        // 开始任务
+        [dataTask resume];
+    } else {
+        // 处理其他请求
+        %orig;
+    }
+}
+
+- (void)stopLoading {
+    %orig;
+}
+
+%end
