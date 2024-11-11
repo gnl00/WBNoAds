@@ -170,13 +170,17 @@
 }
 %end
 
-// 博文下方推荐 WBContentHeaderTrendCell
+// 博文下方推荐 WBTimelineTrendContainerView > WBContentHeaderTrendCell
 @interface WBContentHeaderTrendCell: UIView
 @end
 %hook WBContentHeaderTrendCell
-- (void)layoutSubviews {
+- (void)setFrame:(CGRect)frame {
     %orig;
+    UIView *superview = self;
     [self removeFromSuperview];
+    // 父视图重新布局（可选）
+    [superview setNeedsLayout];
+    [superview layoutIfNeeded];
 }
 %end
 
@@ -213,154 +217,46 @@
 }
 %end
 
-// 禁止网络请求
-@interface CustomURLProtocol: NSURLProtocol
-@end
+// 拦截网络请求
+%hook NSURLSession
 
-@implementation CustomURLProtocol
-
-+ (BOOL)canInitWithRequest:(NSURLRequest *)request {
-    // 定义需要拦截的 URL 前缀数组
-    static NSArray *blockedPrefixes = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        blockedPrefixes = @[
-            @"https://wbapp.uve.weibo.com/wbapplua/wbpullad.lua",
-            @"https://bootpreload.uve.weibo.com/v2/ad/preload",
-            @"https://adstrategy.biz.weibo.com/v3/strategy/ad",
-            @"https://api.weibo.cn/2/video/tiny_stream",
-            @"https://api.weibo.cn/2/video/tiny_stream_video_list",
-            @"https://api.weibo.cn/2/video/!/multimedia/playback/batch_get"
-        ];
-    });
-    
-    // 检查 URL 是否匹配任何前缀
+- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData * _Nullable, NSURLResponse * _Nullable, NSError * _Nullable))completionHandler {
     NSString *urlString = request.URL.absoluteString;
-    for (NSString *prefix in blockedPrefixes) {
-        if ([urlString hasPrefix:prefix]) {
-            return YES;
-        }
+    NSLog(@"WeiboNoAds_HOOK_NSURLSession%@", urlString);
+    if ([urlString containsString:@"https://bootpreload.uve.weibo.com/v2/ad/preload"]) {
+        // 构造一个空的 JSON 响应数据
+        NSData *emptyJsonData = [@"{}" dataUsingEncoding:NSUTF8StringEncoding];
+        NSURLResponse *response = [[NSURLResponse alloc] initWithURL:request.URL MIMEType:@"application/json" expectedContentLength:emptyJsonData.length textEncodingName:nil];
+        completionHandler(emptyJsonData, response, nil);
+        return nil;
     }
-    return NO;
+
+    // 调用原始方法
+    return %orig(request, completionHandler);
 }
 
-+ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
-    return request;
-}
+%end
 
-- (void)startLoading {
-    // 创建一个空的 JSON 响应
-    NSData *responseData = [@"{}" dataUsingEncoding:NSUTF8StringEncoding];
-    
-    // 创建一个 HTTP 响应
-    NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:self.request.URL
-                                                              statusCode:200
-                                                             HTTPVersion:@"HTTP/1.1"
-                                                            headerFields:@{@"Content-Type": @"application/json"}];
-    
-    // 通知客户端请求成功
-    [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
-    [self.client URLProtocol:self didLoadData:responseData];
-    [self.client URLProtocolDidFinishLoading:self];
-}
-
-- (void)stopLoading {
-    // 不需要实现，除非你需要在请求停止时执行某些操作
-}
-
+@interface WBInternalAFURLSessionManager: NSObject
+- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
+                            completionHandler:(void (^)(NSURLResponse *response, id responseObject,  NSError *error))completionHandler;
 @end
 
-// 拦截热搜
-%hook NSURLProtocol
+%hook WBInternalAFURLSessionManager
 
-+ (BOOL)canInitWithRequest:(NSURLRequest *)request {
-    if ([request.URL.absoluteString hasPrefix:@"https://api.weibo.cn/2/flowpage"]) {
-        return YES;
+- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData * _Nullable, NSURLResponse * _Nullable, NSError * _Nullable))completionHandler {
+    NSString *urlString = request.URL.absoluteString;
+    NSLog(@"WeiboNoAds_HOOK_WBInternalAFURLSessionManager%@", urlString);
+    if ([urlString containsString:@"https://api.weibo.cn/2/remind/unread_count"]) {
+        // 构造一个空的 JSON 响应数据
+        NSData *emptyJsonData = [@"{}" dataUsingEncoding:NSUTF8StringEncoding];
+        NSURLResponse *response = [[NSURLResponse alloc] initWithURL:request.URL MIMEType:@"application/json" expectedContentLength:emptyJsonData.length textEncodingName:nil];
+        completionHandler(emptyJsonData, response, nil);
+        return nil;
     }
-    return %orig;
-}
 
-+ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
-    return request;
-}
-
-- (void)startLoading {
-    if ([self.request.URL.absoluteString hasPrefix:@"https://api.weibo.cn/2/flowpage"]) {
-        // 创建会话配置
-        NSURLSessionConfiguration *configuration = [NSURLSessionConfiguration defaultSessionConfiguration];
-        NSURLSession *session = [NSURLSession sessionWithConfiguration:configuration];
-        
-        // 创建数据任务
-        NSURLSessionDataTask *dataTask = [session dataTaskWithRequest:self.request 
-                                                  completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-            if (error || !data) {
-                [self.client URLProtocol:self didFailWithError:error];
-                return;
-            }
-            
-            // 解析 JSON
-            NSError *jsonError = nil;
-            NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonError];
-            if (jsonError || !json) {
-                [self.client URLProtocol:self didFailWithError:jsonError];
-                return;
-            }
-            
-            // 过滤数据
-            NSMutableDictionary *filteredJson = [json mutableCopy];
-            NSArray *items = json[@"items"];
-            if ([items isKindOfClass:[NSArray class]]) {
-                NSMutableArray *filteredItems = [NSMutableArray array];
-                
-                for (NSDictionary *item in items) {
-                    // 检查是否需要过滤
-                    BOOL shouldFilter = NO;
-                    
-                    // 检查 desc 字段
-                    NSString *desc = item[@"data"][@"desc"];
-                    if ([desc isKindOfClass:[NSString class]] && [desc containsString:@"慕"]) {
-                        shouldFilter = YES;
-                    }
-                    
-                    // 检查 desc_extr 字段
-                    NSString *descExtr = item[@"data"][@"desc_extr"];
-                    if ([descExtr isKindOfClass:[NSString class]] && [descExtr containsString:@"剧集"]) {
-                        shouldFilter = YES;
-                    }
-                    
-                    // 如果不需要过滤，添加到新数组
-                    if (!shouldFilter) {
-                        [filteredItems addObject:item];
-                    }
-                }
-                
-                // 更新过滤后的数据
-                filteredJson[@"items"] = filteredItems;
-            }
-            
-            // 创建新的响应数据
-            NSData *filteredData = [NSJSONSerialization dataWithJSONObject:filteredJson options:0 error:nil];
-            if (!filteredData) {
-                [self.client URLProtocol:self didFailWithError:[NSError errorWithDomain:@"JSONSerializationError" code:-1 userInfo:nil]];
-                return;
-            }
-            
-            // 返回过滤后的数据
-            [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
-            [self.client URLProtocol:self didLoadData:filteredData];
-            [self.client URLProtocolDidFinishLoading:self];
-        }];
-        
-        // 开始任务
-        [dataTask resume];
-    } else {
-        // 处理其他请求
-        %orig;
-    }
-}
-
-- (void)stopLoading {
-    %orig;
+    // 调用原始方法
+    return %orig(request, completionHandler);
 }
 
 %end
