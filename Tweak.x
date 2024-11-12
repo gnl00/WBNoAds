@@ -198,22 +198,21 @@
 @interface WBS3PageChannelBarButton: UIView
 @end
 
-// 热搜过滤 WBPageCardSingleTextView > WBTimelineLargeCardTextView
-@interface WBPageCardSingleTextView: UIView
-@property (nonatomic, copy, readwrite) NSString *accessibilityIdentifier;
-@end
-
+// 热搜过滤 WBPageCardSingleTextView > WBTimelineLargeCardTextView > WBTimelineLargeCardText
 @interface WBTimelineLargeCardTextView: UIView
-@property (nonatomic, strong) NSString *accessibilityLabel;
+@property (nonatomic, strong, readwrite) NSArray *lines;
 @end
-
+@interface WBTimelineLargeCardText: NSObject
+@property (nonatomic, strong, readwrite) NSString *content;
+@end
 %hook WBTimelineLargeCardTextView
-- (void)layoutSubviews {
-    %orig;
-    // 检查 accessibilityLabel 是否包含
-    if ([self.accessibilityLabel containsString:@"慕"]) {
-        self.accessibilityLabel = [NSString stringWithFormat:@"找到啦%@", self.accessibilityLabel];
+- (id)initWithFrame:(CGRect)frame {
+    NSArray *lines = [self lines];
+    if (lines && [lines count] > 0) {
+        WBTimelineLargeCardText *firstLine = lines[0];
+        NSLog(@"打印 first line content: %@", firstLine.content);
     }
+    return %orig;
 }
 %end
 
@@ -223,8 +222,11 @@
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData * _Nullable, NSURLResponse * _Nullable, NSError * _Nullable))completionHandler {
     NSString *urlString = request.URL.absoluteString;
     NSLog(@"WeiboNoAds_HOOK_NSURLSession: %@", urlString);
-    if ([urlString containsString:@"https://bootpreload.uve.weibo.com/v2/ad/preload"]
+    if (
+        [urlString containsString:@"https://mediadata.api.weibo.com/2/multimedia/log/report.json"]
+        || [urlString containsString:@"https://bootpreload.uve.weibo.com/v2/ad/preload"]
         || [urlString containsString:@"https://bootrealtime.uve.weibo.com/v3/ad/realtime"]
+        || [urlString containsString:@"https://adstrategy.biz.weibo.com/v3/strategy/ad"]
         || [urlString containsString:@"https://preload-impression.uve.weibo.com/wbapplua/get_wbpullad_log.lua"]
         || [urlString containsString:@"https://preload-click.uve.weibo.com/interface/wbpullad/wbpullad_click.php"]
         ) {
