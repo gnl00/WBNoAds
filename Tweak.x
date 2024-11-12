@@ -222,8 +222,12 @@
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData * _Nullable, NSURLResponse * _Nullable, NSError * _Nullable))completionHandler {
     NSString *urlString = request.URL.absoluteString;
-    NSLog(@"WeiboNoAds_HOOK_NSURLSession%@", urlString);
-    if ([urlString containsString:@"https://bootpreload.uve.weibo.com/v2/ad/preload"]) {
+    NSLog(@"WeiboNoAds_HOOK_NSURLSession: %@", urlString);
+    if ([urlString containsString:@"https://bootpreload.uve.weibo.com/v2/ad/preload"]
+        || [urlString containsString:@"https://bootrealtime.uve.weibo.com/v3/ad/realtime"]
+        || [urlString containsString:@"https://preload-impression.uve.weibo.com/wbapplua/get_wbpullad_log.lua"]
+        || [urlString containsString:@"https://preload-click.uve.weibo.com/interface/wbpullad/wbpullad_click.php"]
+        ) {
         // 构造一个空的 JSON 响应数据
         NSData *emptyJsonData = [@"{}" dataUsingEncoding:NSUTF8StringEncoding];
         NSURLResponse *response = [[NSURLResponse alloc] initWithURL:request.URL MIMEType:@"application/json" expectedContentLength:emptyJsonData.length textEncodingName:nil];
@@ -246,7 +250,7 @@
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData * _Nullable, NSURLResponse * _Nullable, NSError * _Nullable))completionHandler {
     NSString *urlString = request.URL.absoluteString;
-    NSLog(@"WeiboNoAds_HOOK_WBInternalAFURLSessionManager%@", urlString);
+    NSLog(@"WeiboNoAds_HOOK_WBInternalAFURLSessionManager: %@", urlString);
     if ([urlString containsString:@"https://api.weibo.cn/2/remind/unread_count"]) {
         // 构造一个空的 JSON 响应数据
         NSData *emptyJsonData = [@"{}" dataUsingEncoding:NSUTF8StringEncoding];
